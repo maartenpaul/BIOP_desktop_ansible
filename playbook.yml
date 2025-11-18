@@ -1,0 +1,94 @@
+---
+- name: Deploy BIOP Desktop with Jupyter and VNC
+  hosts: localhost
+  become: yes
+  
+  vars:
+    biop_image: "cellularimagingcf/biop-desktop:latest"
+    biop_port: 8888
+    nginx_app_dir: "/etc/nginx/app-location-conf.d"
+    data_dir: "/data/biop"
+    
+  tasks:
+    - name: Create BIOP data directory
+      file:
+        path: "{{ data_dir }}"
+        state: directory
+        mode: '0755'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Pull BIOP Docker image
+      docker_image:
+        name: "{{ biop_image }}"
+        source: pull
+
+    - name: Run BIOP container
+      docker_container:
+        name: biop-desktop
+        image: "{{ biop_image }}"
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "127.0.0.1:{{ biop_port }}:8888"
+        volumes:
+          - "{{ data_dir }}:/home/biop:rw"
+        shm_size: 2g
+        env:
+          JUPYTER_ENABLE_LAB: "yes"
+
+    - name: Wait for BIOP container to be ready
+      wait_for:
+        host: 127.0.0.1
+        port: "{{ biop_port }}"
+        delay: 5
+        timeout: 60
+
+    - name: Create Nginx app configuration directory
+      file:
+        path: "{{ nginx_app_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Configure Nginx proxy for BIOP
+      copy:
+        dest: "{{ nginx_app_dir }}/biop.conf"
+        content: |
+          location /biop/ {
+              proxy_pass http://127.0.0.1:{{ biop_port }}/;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection "upgrade";
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_set_header X-Forwarded-Prefix /biop;
+              
+              proxy_read_timeout 86400;
+              proxy_send_timeout 86400;
+              proxy_buffering off;
+          }
+        mode: '0644'
+      notify: Reload Nginx
+
+    - name: Create usage instructions file
+      copy:
+        dest: /home/{{ ansible_user }}/BIOP_INSTRUCTIONS.txt
+        content: |
+          BIOP Desktop Access
+          ===================
+          
+          Jupyter Lab: https://{{ ansible_fqdn }}/biop/lab
+          VNC Desktop: https://{{ ansible_fqdn }}/biop/vnc
+          
+          Data directory: {{ data_dir }}
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+
+  handlers:
+    - name: Reload Nginx
+      systemd:
+        name: nginx
+        state: reloaded
