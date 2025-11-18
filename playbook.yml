@@ -1,6 +1,7 @@
 ---
 - name: Deploy BIOP Desktop with Jupyter and VNC
   hosts: localhost
+  gather_facts: false
   become: yes
   
   vars:
@@ -14,9 +15,7 @@
       file:
         path: "{{ data_dir }}"
         state: directory
-        mode: '0755'
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        mode: '0777'
 
     - name: Pull BIOP Docker image
       docker_image:
@@ -50,15 +49,19 @@
         state: directory
         mode: '0755'
 
-    - name: Configure Nginx proxy for BIOP
-      copy:
-        dest: "{{ nginx_app_dir }}/biop.conf"
-        content: |
+    - name: Configure Nginx proxy for BIOP with SRAM authentication
+      lineinfile:
+        path: "{{ nginx_app_dir }}/authentication.conf"
+        line: |
           location /biop/ {
+              error_page 401 = @custom_401;
+              auth_request /validate;
+              auth_request_set $username $upstream_http_username;
+              proxy_set_header REMOTE_USER $username;
               proxy_pass http://127.0.0.1:{{ biop_port }}/;
               proxy_http_version 1.1;
               proxy_set_header Upgrade $http_upgrade;
-              proxy_set_header Connection "upgrade";
+              proxy_set_header Connection $connection_upgrade;
               proxy_set_header Host $host;
               proxy_set_header X-Real-IP $remote_addr;
               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -68,27 +71,25 @@
               proxy_read_timeout 86400;
               proxy_send_timeout 86400;
               proxy_buffering off;
+              client_max_body_size 10G;
           }
-        mode: '0644'
-      notify: Reload Nginx
+
+    - name: Restart nginx
+      service:
+        name: nginx
+        state: restarted
 
     - name: Create usage instructions file
       copy:
-        dest: /home/{{ ansible_user }}/BIOP_INSTRUCTIONS.txt
+        dest: "/tmp/BIOP_INSTRUCTIONS.txt"
         content: |
-          BIOP Desktop Access
-          ===================
+          BIOP Desktop Access (SRAM Protected)
+          =====================================
           
-          Jupyter Lab: https://{{ ansible_fqdn }}/biop/lab
-          VNC Desktop: https://{{ ansible_fqdn }}/biop/vnc
+          Access requires SRAM login (collaboration members only)
+          
+          Jupyter Lab: https://{{ workspace_fqdn }}/biop/lab
+          VNC Desktop: https://{{ workspace_fqdn }}/biop/vnc
           
           Data directory: {{ data_dir }}
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
         mode: '0644'
-
-  handlers:
-    - name: Reload Nginx
-      systemd:
-        name: nginx
-        state: reloaded
