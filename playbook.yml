@@ -83,10 +83,8 @@
       copy:
         dest: "/tmp/BIOP_INSTRUCTIONS.txt"
         content: |
-          BIOP Desktop Access (SRAM Protected)
-          =====================================
-          
-          Access requires SRAM login (collaboration members only)
+          BIOP Desktop Access
+          ====================================
           
           Jupyter Lab: https://{{ workspace_fqdn }}/biop/lab
           VNC Desktop: https://{{ workspace_fqdn }}/biop/vnc
